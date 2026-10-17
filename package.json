@@ -1,0 +1,24 @@
+{
+  "name": "naroon-store",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "فروشگاه لوازم تحریر ناروَن — فرانت‌اند استاتیک + API روی Cloudflare Workers/D1",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/serve.mjs",
+    "hash": "node scripts/hash-password.mjs",
+    "seed": "node scripts/gen-seed.mjs",
+    "check": "node scripts/check.mjs",
+    "api:dev": "wrangler dev --config api/wrangler.toml",
+    "api:deploy": "wrangler deploy --config api/wrangler.toml"
+  },
+  "dependencies": {
+    "@fontsource-variable/markazi-text": "5.1.1",
+    "vazirmatn": "33.0.3"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  },
+  "engines": { "node": ">=20" }
+}

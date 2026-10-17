@@ -1,0 +1,31 @@
+name: Deploy site
+on:
+  push: { branches: [main] }
+  workflow_dispatch:
+  schedule: [{ cron: '0 3 * * *' }]   # هر شب ساخت مجدد (برای به‌روزرسانی قیمت‌ها/محصولات در صفحه‌های سئو)
+permissions: { contents: read, pages: write, id-token: write }
+concurrency: { group: pages, cancel-in-progress: true }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci || npm install
+      - run: node --no-warnings test/api.test.mjs
+      - run: node scripts/build.mjs
+        env:
+          SITE_ORIGIN: ${{ vars.SITE_ORIGIN }}
+          API_BASE: ${{ vars.API_BASE }}
+          BASE_PATH: ${{ vars.BASE_PATH }}
+      - run: node scripts/check.mjs
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: dist }
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: { name: github-pages, url: '${{ steps.d.outputs.page_url }}' }
+    steps:
+      - id: d
+        uses: actions/deploy-pages@v4

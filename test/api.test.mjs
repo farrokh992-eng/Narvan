@@ -1,0 +1,66 @@
+// تست سرتاسری API با یک شبیه‌ساز D1 روی node:sqlite — اجرا: node test/api.test.mjs
+import { DatabaseSync } from 'node:sqlite'; import fs from 'node:fs'; import crypto from 'node:crypto';
+import { handle } from '../api/src/index.js';
+const db = new DatabaseSync(':memory:'); db.exec('PRAGMA foreign_keys=ON'); db.exec(fs.readFileSync('api/schema.sql', 'utf8')); db.exec(fs.readFileSync('api/seed.sql', 'utf8'));
+const mk = (sql, a = []) => ({ bind: (...x) => mk(sql, x), first: async () => db.prepare(sql).get(...a) ?? null, all: async () => ({ results: db.prepare(sql).all(...a) }), run: async () => { const r = db.prepare(sql).run(...a); return { meta: { changes: r.changes, last_row_id: Number(r.lastInsertRowid) } }; }, _x: () => db.prepare(sql).run(...a) });
+const DB = { prepare: s => mk(s), batch: async st => { db.exec('BEGIN'); try { const r = []; for (const s of st) r.push(s._x()); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } } };
+const salt = crypto.randomBytes(16), hash = crypto.pbkdf2Sync('TestPass-12345', salt, 100000, 32, 'sha256');
+const env = { DB, ENV: 'development', SITE_URL: 'https://shop.test', PAY_MODE: 'test', ADMIN_PATH: '/panel-abc123', SESSION_SECRET: 'x'.repeat(40), IP_SALT: 's', PAY_OWNER: 'Test Owner', PAY_IBAN: 'IR000000000000000000000000', ADMIN_PASS_HASH: `pbkdf2$100000$${salt.toString('base64url')}$${hash.toString('base64url')}` };
+let ok = 0, bad = 0; const t = (n, c) => { c ? ok++ : (bad++, console.log('✗', n)); };
+const call = async (path, { method = 'GET', body, headers = {}, ip = '10.0.' + Math.floor(Math.random()*250) + '.' + Math.floor(Math.random()*250) } = {}) => { const r = await handle(new Request('https://api.test' + path, { method, headers: { 'CF-Connecting-IP': ip, ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined, redirect: 'manual' }), env); let j = null; try { j = await r.clone().json(); } catch { } return { r, j }; };
+const O = { Origin: 'https://shop.test' };
+const order = (o = {}) => ({ name: 'علی رضایی', phone: '09123456789', prov: 'تهران', city: 'تهران', zip: '1234567890', addr: 'خیابان آزادی پلاک ۱۰', unit: '', ship: 'post', pay: 'cod', terms: true, items: [{ id: 1, q: 2 }], ...o });
+
+let x = await call('/api/catalog', { headers: O }); t('catalog', x.j.products.length === 12 && x.r.headers.get('access-control-allow-origin') === 'https://shop.test');
+x = await call('/api/catalog', { headers: { Origin: 'https://evil.test' } }); t('cors blocks foreign origin', x.r.status === 403);
+x = await call('/api/orders', { method: 'POST', headers: O, body: order({ items: [{ id: 1, q: 2 }], price: 1 }) }); t('cod order', x.j.code && x.j.total === 78000 * 2 + 45000);
+const code = x.j.code; t('stock decremented', db.prepare('SELECT stock FROM products WHERE id=1').get().stock === 38);
+x = await call('/api/orders', { method: 'POST', headers: O, body: order({ items: [{ id: 12, q: 99 }] }) }); t('oversell rejected 409', x.r.status === 409 && db.prepare('SELECT stock FROM products WHERE id=12').get().stock === 12);
+x = await call('/api/orders', { method: 'POST', headers: O, body: order({ items: [{ id: 1, q: 1 }, { id: 12, q: 50 }] }) }); t('atomic rollback', x.r.status === 409 && db.prepare('SELECT stock FROM products WHERE id=1').get().stock === 38);
+x = await call('/api/orders', { method: 'POST', headers: O, body: order({ phone: '123' }) }); t('bad phone', x.r.status === 400);
+x = await call('/api/orders', { method: 'POST', headers: O, body: order({ website: 'bot' }) }); t('honeypot', x.r.status === 400);
+x = await call('/api/orders', { method: 'POST', headers: O, body: order({ ship: 'courier', prov: 'اصفهان' }) }); t('courier only tehran', x.r.status === 400);
+x = await call('/api/orders', { method: 'POST', headers: O, body: order({ items: [{ id: 1, q: -1 }] }) }); t('negative qty', x.r.status === 400);
+x = await call('/api/orders', { method: 'POST', headers: { Origin: 'https://shop.test', 'Content-Type': 'text/plain' }, body: null }); t('needs json', x.r.status === 415 || x.r.status === 400);
+x = await call('/api/coupon', { method: 'POST', headers: O, body: { code: 'WELCOME10', subtotal: 100000 } }); t('coupon ok', x.j.percent === 10);
+x = await call('/api/coupon', { method: 'POST', headers: O, body: { code: 'NOPE' } }); t('coupon bad', x.r.status === 400);
+x = await call('/api/orders', { method: 'POST', headers: O, body: order({ pay: 'card', coupon: 'welcome10', items: [{ id: 6, q: 1 }] }) }); const card = x.j; t('card order w/ coupon (server price)', card.total === 265000 - 26500 + 45000);
+x = await call('/api/orders/track', { method: 'POST', headers: O, body: { code: card.code, phone: '09999999999' } }); t('track wrong phone 404', x.r.status === 404);
+x = await call('/api/orders/track', { method: 'POST', headers: O, body: { code: card.code, phone: '۰۹۱۲۳۴۵۶۷۸۹' } }); t('track + iban only to owner', x.j.pay?.iban === env.PAY_IBAN && x.j.status === 'pending');
+x = await call('/api/orders/track', { method: 'POST', headers: O, body: { code, phone: '09123456789' } }); t('cod has no pay info', !x.j.pay);
+x = await call('/api/orders/receipt', { method: 'POST', headers: O, body: { code: card.code, phone: '09123456789', last4: '1234', ref: '998877' } }); t('receipt', x.j.ok);
+// آنلاین (درگاه آزمایشی)
+x = await call('/api/orders', { method: 'POST', headers: O, body: order({ pay: 'online', items: [{ id: 5, q: 1 }] }) }); t('online starts gateway', x.j.next.type === 'online' && /\/pay\/test\/T[0-9a-f]{24}$/.test(x.j.next.url));
+const au = x.j.next.url.split('/').pop(), oc = x.j.code;
+x = await call('/pay/test/' + au); t('test gateway page', x.r.status === 200);
+let pr = await handle(new Request('https://api.test/pay/test/' + au, { method: 'POST', body: new URLSearchParams({ r: 'ok' }) }), env); t('callback redirects', pr.status === 302 && pr.headers.get('location').includes('paid=1'));
+t('order paid', db.prepare('SELECT status FROM orders WHERE code=?').get(oc).status === 'paid');
+pr = await handle(new Request('https://api.test/pay/test/' + au, { method: 'POST', body: new URLSearchParams({ r: 'ok' }) }), env); t('gateway page gone after use', pr.status === 404);
+env.ENV = 'production'; x = await call('/api/orders', { method: 'POST', headers: O, body: order({ pay: 'online' }) }); t('test gateway disabled in production', x.r.status === 400); env.ENV = 'development';
+// ادمین
+const AP = '/panel-abc123';
+x = await call(AP); t('admin page at secret path', x.r.status === 200 && x.r.headers.get('content-security-policy').includes("script-src 'self'"));
+x = await call('/admin'); t('default /admin hidden', x.r.status === 404);
+x = await call('/api/admin/orders'); t('admin api needs login', x.r.status === 401);
+x = await call('/api/admin/login', { method: 'POST', body: { password: 'wrong' }, ip: '9.9.9.9' }); t('wrong password', x.r.status === 401);
+for (let i = 0; i < 5; i++) x = await call('/api/admin/login', { method: 'POST', body: { password: 'wrong' }, ip: '9.9.9.9' }); t('brute-force limited', x.r.status === 429);
+x = await call('/api/admin/login', { method: 'POST', body: { password: 'TestPass-12345' }, ip: '8.8.8.8' }); t('login ok', x.j.ok); const ck = x.r.headers.get('set-cookie'); t('cookie flags', /HttpOnly/.test(ck) && /Secure/.test(ck) && /SameSite=Strict/.test(ck) && ck.startsWith('__Host-'));
+const A = { Cookie: ck.split(';')[0], 'X-Admin-Req': '1', Origin: 'https://api.test' };
+x = await call('/api/admin/orders', { headers: A }); t('list orders', x.j.orders.length >= 3);
+x = await call('/api/admin/orders/' + card.code, { method: 'PATCH', headers: { Cookie: A.Cookie }, body: { status: 'paid' } }); t('CSRF header required', x.r.status === 403);
+x = await call('/api/admin/orders/' + card.code, { method: 'PATCH', headers: A, body: { status: 'paid', tracking_code: '123' } }); t('confirm card payment', x.j.ok && db.prepare('SELECT status FROM payments WHERE order_id=(SELECT id FROM orders WHERE code=?) AND provider=\'card\'').get(card.code).status === 'paid');
+x = await call('/api/admin/orders/' + code, { method: 'PATCH', headers: A, body: { status: 'cancelled' } }); t('cancel restocks', db.prepare('SELECT stock FROM products WHERE id=1').get().stock === 40);
+x = await call('/api/admin/orders/' + code, { method: 'PATCH', headers: A, body: { status: 'cancelled' } }); t('no double restock', db.prepare('SELECT stock FROM products WHERE id=1').get().stock === 40);
+x = await call('/api/admin/products', { method: 'POST', headers: A, body: { name: 'خودکار تست', cat_id: 2, price: 5000, stock: 10, image: 'javascript:alert(1)' } }); t('bad image rejected', x.r.status === 400);
+x = await call('/api/admin/products', { method: 'POST', headers: A, body: { name: 'خودکار تست', cat_id: 2, price: 5000, stock: 10, image: 'images/products/test.jpg' } }); t('product create', x.j.ok); const pid = x.j.id;
+x = await call('/api/admin/products/' + pid, { method: 'PUT', headers: A, body: { price: 6000 } }); t('product edit', x.j.ok && db.prepare('SELECT price FROM products WHERE id=?').get(pid).price === 6000);
+x = await call('/api/admin/coupons', { method: 'POST', headers: A, body: { code: 'TEST5', percent: 5, max_uses: 1 } }); t('coupon create', x.j.ok);
+x = await call('/api/admin/settings', { method: 'PUT', headers: A, body: { freeShip: 100000, ship: { post: { fee: 50000 }, courier: { fee: 90000 }, pickup: { fee: 0 } }, pay: { online: true, card: true, cod: false } } }); t('settings save', x.j.ok);
+x = await call('/api/catalog', { headers: O }); t('settings reflected', x.j.config.ship.post.fee === 50000 && x.j.config.pay.cod === false);
+x = await call('/api/orders', { method: 'POST', headers: O, body: order() }); t('disabled pay method rejected', x.r.status === 400);
+// XSS: داده‌های مشتری ذخیره می‌شود اما پنل با textContent رندر می‌کند
+x = await call('/api/contact', { method: 'POST', headers: O, body: { name: '<img src=x onerror=alert(1)>', message: 'سلام این یک پیام است' } }); t('contact', x.j.ok);
+x = await call('/api/admin/export/orders.csv', { headers: A }); t('csv export', x.r.status === 200);
+x = await call('/api/admin/logout', { method: 'POST', headers: A }); t('logout', x.j.ok);
+const bad2 = await call('/api/admin/orders', { headers: { Cookie: A.Cookie.replace(/(.)(.{6})$/, (m, c, r) => (c === 'A' ? 'B' : 'A') + r) } }); t('tampered cookie rejected', bad2.r.status === 401);
+console.log(`\n${ok} passed, ${bad} failed`); process.exit(bad ? 1 : 0);

@@ -1,0 +1,54 @@
+{
+ "name": "ناروَن",
+ "nameAlt": "نارون",
+ "tagline": "فروشگاه لوازم تحریر و نوشت‌افزار",
+ "domain": "",
+ "apiBase": "",
+ "phone": "۰۲۱-۰۰۰۰۰۰۰۰",
+ "email": "info@example.ir",
+ "address": "آدرس واقعی را در site/data/site.json بنویسید",
+ "hours": "شنبه تا پنجشنبه، ۹ تا ۱۸",
+ "instagram": "",
+ "enamad": {
+  "href": "",
+  "img": ""
+ },
+ "config": {
+  "freeShip": 600000,
+  "ship": {
+   "post": {
+    "name": "پست پیشتاز",
+    "fee": 45000,
+    "days": [
+     3,
+     5
+    ],
+    "note": "سراسر کشور، با کد رهگیری"
+   },
+   "courier": {
+    "name": "پیک موتوری",
+    "fee": 90000,
+    "days": [
+     0,
+     1
+    ],
+    "note": "فقط تهران",
+    "only": "تهران"
+   },
+   "pickup": {
+    "name": "تحویل حضوری",
+    "fee": 0,
+    "days": [
+     0,
+     0
+    ],
+    "note": "با هماهنگی قبلی"
+   }
+  },
+  "pay": {
+   "online": true,
+   "card": true,
+   "cod": true
+  }
+ }
+}

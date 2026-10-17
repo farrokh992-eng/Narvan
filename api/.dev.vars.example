@@ -1,0 +1,11 @@
+# کپی کنید به api/.dev.vars (این فایل در git نادیده گرفته می‌شود) — فقط برای اجرای محلی
+ENV=development
+SITE_URL=http://localhost:8080
+PAY_MODE=test
+ADMIN_PATH=/admin
+SESSION_SECRET=یک-رشتهٔ-تصادفی-طولانی-بسازید
+IP_SALT=یک-رشتهٔ-تصادفی-دیگر
+# خروجی «npm run hash» را اینجا بگذارید:
+ADMIN_PASS_HASH=
+PAY_OWNER=نام صاحب حساب
+PAY_IBAN=IR000000000000000000000000

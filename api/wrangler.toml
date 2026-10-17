@@ -1,0 +1,21 @@
+# API ناروَن روی Cloudflare Workers + D1 (رایگان برای شروع).
+# هیچ رمز یا شمارهٔ حسابی در این فایل نگذارید؛ همه با «wrangler secret put» ثبت می‌شوند (راهنما در README).
+name = "naroon-api"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+[vars]
+ENV = "production"                         # برای تست محلی در api/.dev.vars مقدار development بگذارید
+SITE_URL = "https://YOUR-DOMAIN.ir"         # آدرس سایت (فرانت‌اند) — بدون اسلش پایانی
+EXTRA_ORIGINS = ""                          # مثلاً "https://www.YOUR-DOMAIN.ir" (جداشده با ویرگول)
+PAY_MODE = "off"                            # off | zarinpal | test (فقط توسعه)
+PAY_SANDBOX = "no"                          # yes برای تست زرین‌پال سندباکس
+
+[[d1_databases]]
+binding = "DB"
+database_name = "naroon"
+database_id = "REPLACE_WITH_YOUR_D1_ID"     # خروجی «wrangler d1 create naroon»
+
+# Secrets (با wrangler secret put): ADMIN_PASS_HASH, SESSION_SECRET, ADMIN_PATH, IP_SALT,
+# PAY_IBAN, PAY_CARD, PAY_OWNER, ZARINPAL_MERCHANT
